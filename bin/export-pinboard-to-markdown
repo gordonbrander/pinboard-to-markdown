@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+
+// We'll be working with files, so require fs.
+var fs = require('fs'),
+    readFileSync = fs.readFileSync,
+    writeFileSync = fs.writeFileSync;
+
+// require the path module -- it lets us create cross-platform filepaths.
+// <http://nodejs.org/api/path.html#path_path_join_path1_path2>
+var path = require('path');
+
+var cli = require('commander');
+
+// Configure the CLI.
+function configureCli() {
+  return cli
+    .usage('[options] <file ...>')
+    .option('-d, --dir <dir>', 'Output directory. Defaults to current directory')
+    .parse(process.argv)
+}
+
+// Get the full file path to the archive file.
+function resolveArchiveFilePath(cli) {
+  return path.resolve(cli.args.pop())
+}
+
+// Get the directory to write files to. Defaults to current directory.
+function resolvePathToWriteDir(cli) {
+  console.log(cli.dir);
+  return path.resolve(cli.dir || '.');
+}
+
+function readFileToJSON(filename, options) {
+  var fileBuffer = readFileSync(filename, options);
+  return JSON.parse(fileBuffer);
+}
+exports.readFileToJSON = readFileToJSON;
+
+// Convert an individual JSON entry into a markdown text blob.
+// Entries look like this:
+//
+//    {
+//      "href":"http:\/\/www.vanityfair.com\/culture\/2012\/12\/microcomputers-weapons-smartphone",
+//      "description":"How a Simple Smartphone Can Turn Your Car, Home, or Medical Device into a Deadly Weapon | Vanity Fair",
+//      "extended":"The internet-connected future is not a good one.",
+//      "meta":"dac83ef0ca55e695ab1a68e5c1bf0e5e",
+//      "hash":"6c67500ac37f082e4886587814adf99f",
+//      "time":"2012-12-29T00:43:53Z",
+//      "shared":"no",
+//      "toread":"no",
+//      "tags":"security culture development internetofthings mobile"
+//    }
+//
+function entryToMarkdown(entry) {
+  // Create title and 
+  var title = "[" + entry.description + "]" + "(" + entry.href + ")";
+  var note = entry.extended;
+
+  var created = 'Created: ' + entry.time;
+  // Prepend hashes to all tags (make them hashtags).
+  // Add tag `from:pinboard` to list of tags.  
+  var tagString = entry.tags
+    .split(' ')
+    .concat(['from:pinboard'])
+    .map(prependHash).join(' ');
+
+  var tags = 'Tags: ' + tagString;
+
+  // Piece together string.
+  return note ?
+           title + '\n\n' + note + '\n\n' + created + '  \n' + tags + '  \n' :
+           title + '\n\n' + created + '  \n' + tags + '  \n';
+}
+exports.entryToMarkdown = entryToMarkdown;
+
+function prependHash(string) {
+  // Prepend a hash to the beginning of the string.
+  return '#' + string;
+}
+
+var illegalChars = /\?|\>|\<|\||\*|\^|\'|\"/g;
+// Makes a string safe for filename.
+function sanitizeForFilename(string) {
+  // Gets around an OSX filename limitation
+  // <http://reviews.cnet.com/8301-13727_7-20030445-263.html>
+  return string
+    .replace(illegalChars, '')
+    .replace(/\//g, ':');
+}
+
+function truncate(string, limit) {
+  return string.length > limit ?
+         string.substring(0, (limit - 1)) :
+         string;
+}
+
+function untrailingslashit(string) {
+  return string.substr(-1) === '/' ?
+         string.substr(0, string.length - 1) :
+         string;
+}
+
+function removeWebAddressGunk(string) {
+  return untrailingslashit(string
+    .replace('http://', '')
+    .replace('https://', '')
+    .replace('www.', '')
+    .replace('www2.', '')
+    .replace('www3.', ''));
+}
+
+// Write a file for a given JSON entry and directory.
+function writeFileForEntry(entry, dir) {
+  var md = entryToMarkdown(entry);
+  // 256 = longest allowed filename for OSX.
+  // -10 for .markdown.
+  var lengthLimit = 256 - 10;
+  var filename = sanitizeForFilename(truncate(removeWebAddressGunk(entry.href), lengthLimit));
+  var filepath = path.join(dir, filename + '.markdown');
+  writeFileSync(filepath, md);
+  return filepath;
+}
+
+function writeFilesForEntries(entries, dir) {
+  return entries.map(function (entry) {
+    return writeFileForEntry(entry, dir);
+  });
+}
+
+function writeFilesFromArchiveFile(cli) {
+  var archiveFilePath = resolveArchiveFilePath(cli);
+  var writeDir = resolvePathToWriteDir(cli);
+
+  var entries = readFileToJSON(archiveFilePath);
+  var filesWritten = writeFilesForEntries(entries, writeDir);
+
+  console.log(filesWritten.length + ' files written:\n' + filesWritten.join('\n'));
+}
+
+var cli = configureCli();
+writeFilesFromArchiveFile(cli);
+
